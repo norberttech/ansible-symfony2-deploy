@@ -1,0 +1,12 @@
+---
+project_name: symfony-standard.com
+project_path: /var/www/symfony
+project_root: "{{ project_path }}/{{ project_name }}"
+project_web_root: "{{ project_root }}/web"
+project_repo: git@github.com:symfony/symfony-standard.git
+db_name: symfony
+db_host: localhost
+db_user: symfony
+db_user_pass: this_is_not_a_good_password
+
+remote_user: www-data # remote user used to clear application cache, update databases install dependencies etc.

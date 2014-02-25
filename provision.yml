@@ -1,0 +1,79 @@
+---
+- name: Install application at server
+  hosts: all
+  remote_user: root
+  vars_files:
+    - vars.yml
+  handlers:
+    - include: handlers.yml
+  gather_facts: false
+  roles:
+    - VCS
+  tasks:
+    - name: Ensure that project path exists
+      file:
+        path: "{{ project_path }}"
+        state: directory
+      remote_user: "{{ remote_user }}"
+
+    - name: Clone project
+      git:
+        repo: "{{ project_repo }}"
+        dest: "{{ project_root }}_source"
+      remote_user: "{{ remote_user }}"
+
+    - name: Set cache folder permissions
+      shell: >
+        APACHEUSER=`ps aux | grep -E '[a]pache|[h]ttpd|[_]www|[w]ww-data' | grep -v root | head -1 | cut -d\  -f1` &&
+        setfacl -R -m u:"$APACHEUSER":rwX -m u:`whoami`:rwX {{ project_root }}_source/app/cache {{ project_root }}_source/app/logs &&
+        setfacl -dR -m u:"$APACHEUSER":rwX -m u:`whoami`:rwX {{ project_root }}_source/app/cache {{ project_root }}_source/app/logs
+
+    - name: Install composer deps
+      shell: cd {{ project_root }}_source && composer install --no-interaction --prefer-source --optimize-autoloader --no-dev
+      remote_user: "{{ remote_user }}"
+
+    - name: Set application parameters
+      template:
+        src: templates/parameters.yml.js2
+        dest: "{{ project_root }}_source/app/config/parameters.yml"
+      remote_user: "{{ remote_user }}"
+
+    - name: Create a new database
+      mysql_db:
+        name: "{{ db_name }}"
+        state: present
+        collation: utf8_general_ci
+
+    - name: Create a database user
+      mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_user_pass }}"
+        priv: "{{ db_name }}.*:ALL"
+        host: "{{ db_host }}"
+        state: present
+
+    - name: Clear application cache
+      shell: php {{ project_root }}_source/app/console ca:cl --env=prod
+      remote_user: "{{ remote_user }}"
+
+    - name: Update database schema
+      shell: php {{ project_root }}_source/app/console doctrine:schema:update --force --env=prod
+      remote_user: "{{ remote_user }}"
+
+    - name: Create link to application source
+      file:
+        src: "{{ project_root }}_source"
+        dest: "{{ project_root }}"
+        state: link
+
+    - name: Create apache2 configuration
+      template:
+        src: templates/vhost-configuration.js2
+        dest: /etc/apache2/sites-available/{{ project_name }}-configuration.conf
+
+    - name: Enable apache2 vhosts
+      file:
+        src: /etc/apache2/sites-available/{{ project_name }}-configuration.conf
+        dest: /etc/apache2/sites-enabled/{{ project_name }}-configuration.conf
+        state: link
+      notify: restart apache

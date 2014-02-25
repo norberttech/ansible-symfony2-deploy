@@ -1,0 +1,63 @@
+---
+- name: Deploy application
+  hosts: all
+  remote_user: root
+  vars_files:
+    - vars.yml
+  handlers:
+    - include: handlers.yml
+  gather_facts: false
+
+  tasks:
+    - name: Register timestamp variable
+      shell: date +%Y_%m_%d_%H_%M_%S
+      register: timestamp
+
+    - name: Copy project source to temp folder
+      shell: rsync -r --copy-links --exclude 'app/cache/*' --exclude 'app/logs/*' {{ project_root }}/ {{ project_root }}_{{ timestamp.stdout }}/
+      remote_user: "{{ remote_user }}"
+
+    - name: Fetch project origin
+      shell: cd {{ project_root }}_{{ timestamp.stdout }} && git fetch origin
+      remote_user: "{{ remote_user }}"
+
+    - name: Merge project origin master branch
+      shell: cd {{ project_root }}_{{ timestamp.stdout }} && git merge origin/master
+      remote_user: "{{ remote_user }}"
+
+    - name: Set cache folder permissions
+      shell: >
+        APACHEUSER=`ps aux | grep -E '[a]pache|[h]ttpd|[_]www|[w]ww-data' | grep -v root | head -1 | cut -d\  -f1` &&
+        setfacl -R -m u:"$APACHEUSER":rwX -m u:`whoami`:rwX {{ project_root }}_{{ timestamp.stdout }}/app/cache {{ project_root }}_{{ timestamp.stdout }}/app/logs &&
+        setfacl -dR -m u:"$APACHEUSER":rwX -m u:`whoami`:rwX {{ project_root }}_{{ timestamp.stdout }}/app/cache {{ project_root }}_{{ timestamp.stdout }}/app/logs
+
+    - name: Install composer dependencies
+      shell: cd {{ project_root }}_{{ timestamp.stdout }} && composer install --no-interaction --prefer-source --optimize-autoloader --no-dev
+      remote_user: "{{ remote_user }}"
+
+    - name: Set application parameters
+      template:
+        src: templates/parameters.yml.js2
+        dest: "{{ project_root }}_{{ timestamp.stdout }}/app/config/parameters.yml"
+      remote_user: "{{ remote_user }}"
+
+    - name: Clear application cache
+      shell: php {{ project_root }}_{{ timestamp.stdout }}/app/console ca:cl --no-debug --env=prod
+      remote_user: "{{ remote_user }}"
+
+    - name: Update database schema
+      shell: php {{ project_root }}_{{ timestamp.stdout }}/app/console doctrine:schema:update --force --env=prod
+      remote_user: "{{ remote_user }}"
+
+    - name: Remove link to old application code
+      file:
+        path: "{{ project_root }}"
+        state: absent
+      remote_user: "{{ remote_user }}"
+
+    - name: Create link to shiny new application code
+      file:
+        src: "{{ project_root }}_{{ timestamp.stdout }}"
+        dest: "{{ project_root }}"
+        state: link
+      remote_user: "{{ remote_user }}"

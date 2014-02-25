@@ -1,0 +1,36 @@
+---
+- name: Remove application from server
+  hosts: all
+  remote_user: root
+  vars_files:
+    - vars.yml
+  handlers:
+    - include: handlers.yml
+  gather_facts: false
+
+  tasks:
+    - name: Delete all project source
+      file:
+        path: "{{ project_path }}"
+        state: absent
+
+    - name: Disable apache2 vhosts
+      file:
+        path: "/etc/apache2/sites-enabled/{{ project_name }}-configuration.conf"
+        state: absent
+
+    - name: Remove apache2 configuration
+      file:
+        path: "/etc/apache2/sites-available/{{ project_name }}-configuration.conf"
+        state: absent
+      notify: restart apache
+
+    - name: Remove database
+      mysql_db:
+        name: "{{ db_name }}"
+        state: absent
+
+    - name: Remove database user
+      mysql_user:
+        name: "{{ db_user }}"
+        state: absent
